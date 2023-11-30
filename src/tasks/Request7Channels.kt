@@ -14,31 +14,24 @@ suspend fun loadContributorsChannels(
         val repos = service
             .getOrgRepos(req.org)
             .also { logRepos(req, it) }
-            .body() ?: emptyList()
+            .bodyList()
 
         val channel = Channel<List<User>>()
-        var usersList = listOf<User>()
 
-        val countDownLatch = CountDownLatch(repos.size)
-        repos.mapIndexed { index, repo ->
-            async {
-                log("starting loading for ${repo.name}")
-                delay(3000)
-                val users = service
-                    .getRepoContributors(req.org, repo.name)
+        for (repo in repos) {
+            launch {
+                val users = service.getRepoContributors(req.org, repo.name)
                     .also { logUsers(repo, it) }
                     .bodyList()
-                countDownLatch.countDown()
                 channel.send(users)
-            }.apply {
-                launch {
-                    log("enter into channel receiver____________________________________________________")
-                    val receivedUsers = channel.receive()
-                    usersList = (usersList + receivedUsers).aggregate()
-                    updateResults(usersList, countDownLatch.count == 0L)
-                }
             }
-        }.awaitAll()
+        }
+        var allUsers = emptyList<User>()
+        repeat(repos.size) {
+            val users = channel.receive()
+            allUsers = (allUsers + users).aggregate()
+            updateResults(allUsers, it == repos.lastIndex)
+        }
     }
 }
 
